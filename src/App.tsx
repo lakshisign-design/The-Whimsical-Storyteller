@@ -10,6 +10,7 @@ type StorySegment = {
   image: string;
   options: string[];
   moodColor?: string;
+  userNarration?: string; // Base64 string of the user's recording
 };
 
 type SavedStory = {
@@ -29,6 +30,7 @@ export default function App() {
   const [storyHistory, setStoryHistory] = useState<StorySegment[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [isReading, setIsReading] = useState(false);
+  const [isUserReading, setIsUserReading] = useState(false);
   const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [storyTitle, setStoryTitle] = useState("");
   const [finalSentence, setFinalSentence] = useState("");
@@ -42,6 +44,7 @@ export default function App() {
   const [isNarratorEnabled, setIsNarratorEnabled] = useState(true);
   const [audioProgress, setAudioProgress] = useState(0);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const userAudioRef = useRef<HTMLAudioElement | null>(null);
   const bgMusicRef = useRef<HTMLAudioElement | null>(null);
   const animationRef = useRef<number>(0);
   const startTimeRef = useRef<number>(0);
@@ -133,9 +136,25 @@ export default function App() {
   const dynamicColor = currentSegment?.moodColor || "#1e3a8a"; // Default deep blue
   const currentParticleColor = currentIndex >= 0 ? particleColors[currentIndex % particleColors.length] : particleColors[0];
 
+  const stopAllAudio = () => {
+    if (audioSourceRef.current) {
+      audioSourceRef.current.stop();
+      audioSourceRef.current = null;
+    }
+    if (userAudioRef.current) {
+      userAudioRef.current.pause();
+      userAudioRef.current = null;
+    }
+    setIsReading(false);
+    setIsUserReading(false);
+    setAudioProgress(0);
+    cancelAnimationFrame(animationRef.current);
+  };
+
   const playNarration = async (storyText: string, options?: string[], isFirstPage: boolean = false, forcePlay: boolean = false) => {
     if (!isNarratorEnabled && !forcePlay) return;
     
+    stopAllAudio();
     setIsReading(true);
     setAudioProgress(0);
     try {
@@ -189,6 +208,60 @@ export default function App() {
       setIsReading(false);
       setAudioProgress(0);
     }
+  };
+
+  const playUserNarration = () => {
+    if (!currentSegment?.userNarration) return;
+    
+    stopAllAudio();
+    setIsUserReading(true);
+    
+    const audio = new Audio(currentSegment.userNarration);
+    userAudioRef.current = audio;
+    
+    audio.onloadedmetadata = () => {
+      durationRef.current = audio.duration;
+      startTimeRef.current = Date.now();
+      
+      const updateProgress = () => {
+        if (!userAudioRef.current) return;
+        const elapsed = (Date.now() - startTimeRef.current) / 1000;
+        const progress = Math.min(1, elapsed / durationRef.current);
+        setAudioProgress(progress);
+        
+        if (progress < 1) {
+          animationRef.current = requestAnimationFrame(updateProgress);
+        }
+      };
+      animationRef.current = requestAnimationFrame(updateProgress);
+    };
+
+    audio.onended = () => {
+      setIsUserReading(false);
+      setAudioProgress(0);
+      userAudioRef.current = null;
+      cancelAnimationFrame(animationRef.current);
+    };
+
+    audio.play().catch(e => {
+      console.error("User audio playback failed:", e);
+      setIsUserReading(false);
+    });
+  };
+
+  const handleSaveUserNarration = async (audioBlob: Blob) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result as string;
+      const updatedHistory = [...storyHistory];
+      updatedHistory[currentIndex] = {
+        ...updatedHistory[currentIndex],
+        userNarration: base64
+      };
+      setStoryHistory(updatedHistory);
+      showToast("Your narration has been recorded!");
+    };
+    reader.readAsDataURL(audioBlob);
   };
 
   const handleStart = async () => {
@@ -657,8 +730,12 @@ export default function App() {
                 onOptionSelect={handleNextSegment}
                 onReadAloud={handleReadAloud}
                 onVoiceInput={handleVoiceInput}
+                onSaveUserNarration={handleSaveUserNarration}
+                onPlayUserNarration={playUserNarration}
                 onEndStory={handleEndStory}
                 isReading={isReading}
+                isUserReading={isUserReading}
+                userNarrationUrl={storyHistory[currentIndex].userNarration}
                 isProcessingVoice={isProcessingVoice}
                 isGeneratingNext={isGeneratingNext}
                 selectedOption={selectedOption}

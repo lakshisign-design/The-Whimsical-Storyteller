@@ -9,8 +9,12 @@ interface BookPageProps {
   onOptionSelect: (option: string) => void;
   onReadAloud: () => void;
   onVoiceInput: (audioBlob: Blob) => void;
+  onSaveUserNarration: (audioBlob: Blob) => void;
+  onPlayUserNarration: () => void;
   onEndStory: () => void;
   isReading: boolean;
+  isUserReading: boolean;
+  userNarrationUrl?: string;
   isProcessingVoice: boolean;
   isGeneratingNext?: boolean;
   selectedOption?: string | null;
@@ -26,8 +30,12 @@ export function BookPage({
   onOptionSelect,
   onReadAloud,
   onVoiceInput,
+  onSaveUserNarration,
+  onPlayUserNarration,
   onEndStory,
   isReading,
+  isUserReading,
+  userNarrationUrl,
   isProcessingVoice,
   isGeneratingNext,
   selectedOption,
@@ -35,7 +43,8 @@ export function BookPage({
   audioProgress = 0,
   onError
 }: BookPageProps) {
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingChoice, setIsRecordingChoice] = useState(false);
+  const [isRecordingNarration, setIsRecordingNarration] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const isStartingRef = useRef(false);
@@ -52,7 +61,7 @@ export function BookPage({
   useEffect(() => {
     if (!bgMusicRef.current) return;
 
-    const targetVolume = isReading ? 0.03 : 0.15;
+    const targetVolume = (isReading || isUserReading) ? 0.03 : 0.15;
     const audio = bgMusicRef.current;
     
     const fadeInterval = setInterval(() => {
@@ -68,17 +77,16 @@ export function BookPage({
     }, 50);
 
     return () => clearInterval(fadeInterval);
-  }, [isReading]);
+  }, [isReading, isUserReading]);
 
-  const startRecording = async () => {
-    if (isStartingRef.current || isRecording) return;
+  const startRecording = async (type: 'choice' | 'narration') => {
+    if (isStartingRef.current || isRecordingChoice || isRecordingNarration) return;
     isStartingRef.current = true;
     shouldStopRef.current = false;
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // If user released the button while we were getting permissions
       if (shouldStopRef.current) {
         stream.getTracks().forEach(track => track.stop());
         isStartingRef.current = false;
@@ -98,12 +106,17 @@ export function BookPage({
       mediaRecorder.onstop = () => {
         const mimeType = mediaRecorder.mimeType || 'audio/webm';
         const audioBlob = new Blob(chunksRef.current, { type: mimeType });
-        onVoiceInput(audioBlob);
+        if (type === 'choice') {
+          onVoiceInput(audioBlob);
+        } else {
+          onSaveUserNarration(audioBlob);
+        }
         stream.getTracks().forEach(track => track.stop());
       };
 
       mediaRecorder.start();
-      setIsRecording(true);
+      if (type === 'choice') setIsRecordingChoice(true);
+      else setIsRecordingNarration(true);
       isStartingRef.current = false;
     } catch (err) {
       console.error("Error accessing microphone:", err);
@@ -114,9 +127,10 @@ export function BookPage({
 
   const stopRecording = () => {
     shouldStopRef.current = true;
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && (isRecordingChoice || isRecordingNarration)) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
+      setIsRecordingChoice(false);
+      setIsRecordingNarration(false);
     }
   };
 
@@ -174,7 +188,7 @@ export function BookPage({
   let currentWordIndex = -1;
   let currentOptionIndex = -1;
 
-  if (isReading) {
+  if (isReading || isUserReading) {
     if (audioProgress <= storyRatio) {
       const storyProgress = storyRatio > 0 ? audioProgress / storyRatio : 0;
       currentWordIndex = Math.floor(storyProgress * words.length);
@@ -271,7 +285,7 @@ export function BookPage({
                   {segment.words.map((w) => (
                     <span 
                       key={w.index} 
-                      className={`transition-colors duration-200 ${isReading && w.index === currentWordIndex ? 'bg-amber-300/60 text-amber-950 rounded-md px-1' : ''}`}
+                      className={`transition-colors duration-200 ${(isReading || isUserReading) && w.index === currentWordIndex ? 'bg-amber-300/60 text-amber-950 rounded-md px-1' : ''}`}
                     >
                       {w.word}{' '}
                     </span>
@@ -279,14 +293,59 @@ export function BookPage({
                 </span>
               ))}
             </h2>
-            <button
-              onClick={onReadAloud}
-              disabled={isReading}
-              className="p-4 md:p-5 rounded-full bg-stone-800 text-amber-400 hover:bg-stone-700 transition-colors disabled:opacity-50 flex-shrink-0 ml-6 border-4 border-stone-600 shadow-xl transform hover:scale-105 active:scale-95"
-              title="Read aloud"
-            >
-              {isReading ? <Volume2 className="w-8 h-8 md:w-10 md:h-10 animate-pulse" /> : <Volume2 className="w-8 h-8 md:w-10 md:h-10" />}
-            </button>
+            <div className="flex flex-col space-y-3 ml-6 shrink-0">
+              <button
+                onClick={onReadAloud}
+                disabled={isReading || isUserReading}
+                className="p-4 md:p-5 rounded-full bg-stone-800 text-amber-400 hover:bg-stone-700 transition-colors disabled:opacity-50 border-4 border-stone-600 shadow-xl transform hover:scale-105 active:scale-95"
+                title="Read aloud"
+              >
+                {isReading ? <Volume2 className="w-8 h-8 md:w-10 md:h-10 animate-pulse" /> : <Volume2 className="w-8 h-8 md:w-10 md:h-10" />}
+              </button>
+              
+              {userNarrationUrl && (
+                <button
+                  onClick={onPlayUserNarration}
+                  disabled={isReading || isUserReading}
+                  className="p-4 md:p-5 rounded-full bg-violet-800 text-amber-300 hover:bg-violet-700 transition-colors disabled:opacity-50 border-4 border-violet-950 shadow-xl transform hover:scale-105 active:scale-95"
+                  title="Play my narration"
+                >
+                  {isUserReading ? <Volume2 className="w-8 h-8 md:w-10 md:h-10 animate-pulse" /> : <Mic className="w-8 h-8 md:w-10 md:h-10" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white/40 rounded-2xl p-4 mb-6 border-2 border-stone-400/20 shadow-inner">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center text-violet-800">
+                  <Mic className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-stone-800 font-serif">Be the Storyteller!</p>
+                  <p className="text-xs text-stone-600 font-serif italic">Record your own voice for this page</p>
+                </div>
+              </div>
+              <button
+                onMouseDown={() => startRecording('narration')}
+                onMouseUp={stopRecording}
+                onMouseLeave={stopRecording}
+                onTouchStart={() => startRecording('narration')}
+                onTouchEnd={stopRecording}
+                className={`px-6 py-2 rounded-full font-bold font-serif transition-all border-2 flex items-center space-x-2 ${
+                  isRecordingNarration 
+                    ? 'bg-red-600 text-white border-red-800 scale-105 animate-pulse' 
+                    : 'bg-white text-violet-800 border-violet-200 hover:bg-violet-50'
+                }`}
+              >
+                {isRecordingNarration ? (
+                  <><Square className="w-4 h-4 fill-current" /> <span>Recording...</span></>
+                ) : (
+                  <><Mic className="w-4 h-4" /> <span>{userNarrationUrl ? "Record Again" : "Record Voice"}</span></>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="mt-auto pt-8 space-y-4 relative z-10 shrink-0">
@@ -301,7 +360,7 @@ export function BookPage({
                   ? 'border-amber-700 bg-amber-900/10 text-amber-900' 
                   : isGeneratingNext 
                     ? 'border-stone-300 bg-stone-200/50 text-stone-500 opacity-50 cursor-not-allowed'
-                    : isReading && currentOptionIndex === idx
+                    : (isReading || isUserReading) && currentOptionIndex === idx
                       ? 'border-amber-500 bg-amber-100 text-amber-900 scale-[1.04] shadow-xl'
                       : 'border-stone-500 hover:border-violet-800 hover:bg-violet-800 hover:text-amber-100 text-stone-800 bg-white/50'
               }`}
@@ -309,7 +368,7 @@ export function BookPage({
               <span className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center mr-4 md:mr-6 transition-colors border-2 shrink-0 text-xl ${
                 isGeneratingNext && selectedOption === option
                   ? 'bg-amber-700 text-amber-100 border-amber-800'
-                  : isReading && currentOptionIndex === idx
+                  : (isReading || isUserReading) && currentOptionIndex === idx
                     ? 'bg-amber-500 text-amber-950 border-amber-600'
                     : 'bg-stone-200 text-stone-700 border-stone-400 group-hover:bg-violet-700 group-hover:text-amber-200 group-hover:border-violet-600'
               }`}>
@@ -322,28 +381,28 @@ export function BookPage({
           <div className="pt-6 mt-6 border-t border-stone-400/30 flex flex-col items-center">
             <p className="text-sm text-stone-600 mb-3 uppercase tracking-widest font-serif font-bold">Or speak thy mind</p>
             <button
-              onMouseDown={startRecording}
+              onMouseDown={() => startRecording('choice')}
               onMouseUp={stopRecording}
               onMouseLeave={stopRecording}
-              onTouchStart={startRecording}
+              onTouchStart={() => startRecording('choice')}
               onTouchEnd={stopRecording}
               disabled={isProcessingVoice || isGeneratingNext}
               className={`p-6 rounded-full transition-all shadow-xl flex items-center justify-center border-4 ${
-                isRecording 
+                isRecordingChoice 
                   ? 'bg-amber-600 text-amber-100 scale-110 animate-pulse shadow-[0_0_30px_rgba(217,119,6,0.6)] border-amber-800' 
                   : 'bg-violet-800 text-amber-300 border-violet-950 hover:bg-violet-700 hover:scale-105'
               } ${(isProcessingVoice || isGeneratingNext) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isProcessingVoice ? (
                 <Loader2 className="w-10 h-10 md:w-12 md:h-12 animate-spin" />
-              ) : isRecording ? (
+              ) : isRecordingChoice ? (
                 <Square className="w-10 h-10 md:w-12 md:h-12 fill-current" />
               ) : (
                 <Mic className="w-10 h-10 md:w-12 md:h-12" />
               )}
             </button>
             <p className="text-sm text-stone-600 mt-3 font-serif italic font-medium">
-              {isRecording ? "Listening... release to speak" : "Hold to speak"}
+              {isRecordingChoice ? "Listening... release to speak" : "Hold to speak"}
             </p>
           </div>
 
